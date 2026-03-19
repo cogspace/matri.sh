@@ -38,6 +38,13 @@ try:
 except ImportError:
     sys.exit("matrix.sh: pyte is required — run: pip install pyte")
 
+# Newer pyte streams pass `private=True` to csi_dispatch handlers (including
+# select_graphic_rendition) but pyte's own Screen doesn't accept that kwarg,
+# causing a crash on certain escape sequences (e.g. from vi).  Absorb it here.
+class _Screen(pyte.Screen):
+    def select_graphic_rendition(self, *attrs, private=False, **kwargs):
+        super().select_graphic_rendition(*attrs, **kwargs)
+
 try:
     from wcwidth import wcwidth as _wcwidth
 except ImportError:
@@ -159,7 +166,7 @@ class MatrixShell:
         self._rain: list[Column] = [
             Column(x, self.rows, stagger=True) for x in range(self.cols)
         ]
-        self._screen = pyte.Screen(self.cols, self.rows)
+        self._screen = _Screen(self.cols, self.rows)
         self._stream = pyte.ByteStream(self._screen)
         self._fd:  int = -1     # PTY master file descriptor
         self._pid: int = -1     # shell process PID
