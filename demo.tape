@@ -1,4 +1,4 @@
-Output demo.mp4
+Output demo.gif
 
 Set Width 1320
 Set Height 600
@@ -40,15 +40,4 @@ Type "grep MATRISH_ matri.sh"
 Sleep 500ms
 Enter
 
-Sleep 3s
-
-Type "claude"
-Sleep 500ms
-Enter
-
-Sleep 3s
-
-Type "Tell me about this repo"
-Enter
-
-Sleep 30s
+Sleep 10s

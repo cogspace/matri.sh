@@ -1,10 +1,10 @@
 # matri.sh
 
-Wraps your terminal in a pretty 60 FPS digital rain effect "inspired by" The Matrix. The rain effect runs in the background and leaves a border around the foreground to keep things legible.
+Wraps your terminal in a pretty 60 FPS digital rain effect "inspired by" The Matrix.
 
-https://github.com/user-attachments/assets/8f7f2134-5e5d-45b2-af8a-fa46811fce13
+![demo](./demo.gif)
 
-⚠️ Warning: Like The Matrix itself, `matri.sh` was created by an AI agent.  Claude is no Smith, but I still trust him about as far as I can throw him and those server racks are _heavy_. Don't trust this stupid toy for anything important.
+⚠️ Warning: Like The Matrix itself, `matri.sh` was created by an AI agent.  Claude is no Smith, but I still trust him about as far as I can throw him and those server racks are _heavy_. Don't use this stupid toy for anything important.
 
 ## Requirements
 
