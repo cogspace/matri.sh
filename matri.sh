@@ -38,12 +38,24 @@ try:
 except ImportError:
     sys.exit("matrix.sh: pyte is required — run: pip install pyte")
 
-# Newer pyte streams pass `private=True` to csi_dispatch handlers (including
-# select_graphic_rendition) but pyte's own Screen doesn't accept that kwarg,
-# causing a crash on certain escape sequences (e.g. from vi).  Absorb it here.
+# Newer pyte streams call csi_dispatch handlers with `private=True` for CSI
+# sequences prefixed with `?`, but pyte's Screen methods don't accept that kwarg.
+# Wrap every public Screen method once at class-definition time so any handler
+# in the dispatch table silently absorbs `private` regardless of which one
+# pyte decides to call in the future.
+def _absorb_private(fn):
+    import functools
+    @functools.wraps(fn)
+    def _wrapper(*args, private=False, **kwargs):
+        return fn(*args, **kwargs)
+    return _wrapper
+
 class _Screen(pyte.Screen):
-    def select_graphic_rendition(self, *attrs, private=False, **kwargs):
-        super().select_graphic_rendition(*attrs, **kwargs)
+    pass
+
+for _name, _val in vars(pyte.Screen).items():
+    if not _name.startswith("_") and callable(_val):
+        setattr(_Screen, _name, _absorb_private(_val))
 
 try:
     from wcwidth import wcwidth as _wcwidth
@@ -171,6 +183,7 @@ class MatrixShell:
         self._fd:  int = -1     # PTY master file descriptor
         self._pid: int = -1     # shell process PID
         self._running = True
+        self._altscreen = False  # True while shell is in alternate screen mode
 
     # ── PTY management ────────────────────────────────────────────────────────
 
@@ -218,13 +231,13 @@ class MatrixShell:
         """True when the shell placed visible content in this cell."""
         if ch is None:
             return False
-        return (
-            bool(ch.data and ch.data not in (" ", "\x00"))
-            or ch.fg  not in ("default", None)
-            or ch.bg  not in ("default", None)
-            or ch.bold
-            or ch.reverse
-        )
+        has_char = bool(ch.data and ch.data not in (" ", "\x00"))
+        # A cell with only a background color and no actual character (e.g. the
+        # blank areas of full-screen TUI apps like vi or opencode) should not
+        # block rain — it has no visible content from the user's perspective.
+        if not has_char:
+            return ch.fg not in ("default", None) or ch.reverse
+        return True
 
     def _render(self, dt: float) -> None:
         for col in self._rain:
@@ -365,14 +378,34 @@ class MatrixShell:
                     try:
                         chunk = os.read(self._fd, 4096)
                         if chunk:
-                            self._stream.feed(chunk)
+                            # Detect alternate screen transitions so full-screen
+                            # TUI apps (vim, opencode, htop, …) get the terminal
+                            # to themselves with no rain overlay.
+                            if b"\033[?1049h" in chunk or b"\033[?47h" in chunk:
+                                self._altscreen = True
+                            exiting = (
+                                b"\033[?1049l" in chunk or b"\033[?47l" in chunk
+                            )
+                            if self._altscreen:
+                                # Pass through directly — do not composite rain.
+                                # Crucially, the chunk that *contains* the exit
+                                # sequence also carries cleanup codes (mouse
+                                # disable, etc.) that must reach the terminal,
+                                # so we still pass it through before clearing
+                                # the flag for subsequent chunks.
+                                sys.stdout.buffer.write(chunk)
+                                sys.stdout.buffer.flush()
+                                if exiting:
+                                    self._altscreen = False
+                            else:
+                                self._stream.feed(chunk)
                     except OSError:
                         self._running = False
                         break
 
-                # Render at target frame rate
+                # Render at target frame rate (suppressed in alternate screen)
                 now = time.monotonic()
-                if now - last_render >= frame_time:
+                if not self._altscreen and now - last_render >= frame_time:
                     self._render(now - last_render)
                     last_render = now
 
