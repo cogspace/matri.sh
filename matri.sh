@@ -47,7 +47,7 @@ except ImportError:
 
 # ─── Matrix rain characters ───────────────────────────────────────────────────
 
-CHARS = "ｦｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789"
+CHARS = "ｦｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789|+=*\"^~><-:Z@#$%&"
 
 
 # ─── pyte color → ANSI escape ─────────────────────────────────────────────────
@@ -116,10 +116,10 @@ class Column:
         self._init(stagger=stagger)
 
     def _init(self, stagger: bool = False) -> None:
-        self.speed  = random.uniform(0.18, 0.65)   # screen-heights per second
+        self.speed  = random.uniform(1.6, 5.2)     # screen-heights per second
         self.length = random.randint(6, min(self.height, 30))
         self.chars  = [random.choice(CHARS) for _ in range(max(self.height, 1))]
-        self._ttg   = random.uniform(0.04, 0.4)    # seconds until next glitch
+        self._ttg   = random.uniform(0.004, 0.04)    # seconds until next glitch
         # Stagger starting positions so columns don't all start together
         lo = -self.height * 0.8 if stagger else -10
         hi =  self.height * 0.8 if stagger else   0
@@ -132,7 +132,7 @@ class Column:
         self._ttg -= dt
         if self._ttg <= 0:
             self.chars[random.randrange(len(self.chars))] = random.choice(CHARS)
-            self._ttg = random.uniform(0.04, 0.35)
+            self._ttg = random.uniform(0.004, 0.04)
 
     def cell_at(self, row: int) -> Optional[tuple[str, str]]:
         """Return (char, ansi_color) for *row*, or None if no rain here."""
@@ -152,7 +152,7 @@ class Column:
 # ─── Application ──────────────────────────────────────────────────────────────
 
 class MatrixShell:
-    FPS = 30
+    FPS = 60
 
     def __init__(self) -> None:
         self.cols, self.rows = shutil.get_terminal_size()
