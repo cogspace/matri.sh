@@ -1,4 +1,4 @@
-#!/home/mirage/Projects/matrix.sh/.venv/bin/python
+#!/usr/bin/env python
 """
 matrix.sh — Digital rain TUI shell wrapper.
 
