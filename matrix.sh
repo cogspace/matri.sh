@@ -230,8 +230,26 @@ class MatrixShell:
 
         prev_esc = ""   # track last colour/attr escape to avoid redundant codes
 
+        # Pre-scan entire screen: find all shell-owned (row, col) pairs, then
+        # build the 8-neighbor border so rain never touches shell text from
+        # any direction (left, right, above, below, or diagonally).
+        owned_cells: set[tuple[int, int]] = {
+            (r, c)
+            for r in range(self.rows)
+            for c, ch in self._screen.buffer.get(r, {}).items()
+            if self._shell_owns_cell(ch)
+        }
+        shell_border: set[tuple[int, int]] = {
+            (r + dr, c + dc)
+            for (r, c) in owned_cells
+            for dr in (-1, 0, 1)
+            for dc in (-1, 0, 1)
+            if (dr or dc)                           # skip the cell itself
+        } - owned_cells
+
         for row in range(self.rows):
             row_buf = self._screen.buffer.get(row, {})
+
             skip_next = False   # True after a wide char: terminal already advanced
             for col_idx in range(self.cols):
                 if skip_next:
@@ -264,6 +282,10 @@ class MatrixShell:
                             glyph = " "       # clip: can't fit, use placeholder
                         else:
                             skip_next = True  # terminal cursor is already at col+2
+                elif (row, col_idx) in shell_border:
+                    # ── One-cell buffer either side of shell text ─────────
+                    # Keeps rain from bleeding directly into/out of words.
+                    glyph, cell_esc = " ", "\033[0m"
                 else:
                     # ── Digital rain (or blank) ───────────────────────────
                     rain = (
