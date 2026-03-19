@@ -66,7 +66,32 @@ except ImportError:
 
 # ─── Matrix rain characters ───────────────────────────────────────────────────
 
-CHARS = "ｦｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789|+=*\"^~><-:Z@#$%&"
+CHARS = os.environ.get(
+    "MATRISH_CHARS",
+    "ｦｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789Z|+=*\"^~><-:@#$%&",
+)
+
+# ─── Rain tuning constants ────────────────────────────────────────────────────
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+MIN_SPEED           = _env_float("MATRISH_MIN_SPEED",           1.6)
+MAX_SPEED           = _env_float("MATRISH_MAX_SPEED",           5.2)
+MIN_LENGTH          = _env_int  ("MATRISH_MIN_LENGTH",          6)
+MAX_LENGTH          = _env_int  ("MATRISH_MAX_LENGTH",          30)
+SPEED_SCALE_ROWS    = _env_float("MATRISH_SPEED_SCALE_ROWS",    20.0)
+MIN_GLITCH_INTERVAL = _env_float("MATRISH_MIN_GLITCH_INTERVAL", 0.004)
+MAX_GLITCH_INTERVAL = _env_float("MATRISH_MAX_GLITCH_INTERVAL", 0.04)
 
 
 # ─── pyte color → ANSI escape ─────────────────────────────────────────────────
@@ -135,23 +160,23 @@ class Column:
         self._init(stagger=stagger)
 
     def _init(self, stagger: bool = False) -> None:
-        self.speed  = random.uniform(1.6, 5.2)     # screen-heights per second
-        self.length = random.randint(6, min(self.height, 30))
+        self.speed  = random.uniform(MIN_SPEED, MAX_SPEED)
+        self.length = random.randint(MIN_LENGTH, min(self.height, MAX_LENGTH))
         self.chars  = [random.choice(CHARS) for _ in range(max(self.height, 1))]
-        self._ttg   = random.uniform(0.004, 0.04)    # seconds until next glitch
+        self._ttg   = random.uniform(MIN_GLITCH_INTERVAL, MAX_GLITCH_INTERVAL)
         # Stagger starting positions so columns don't all start together
         lo = -self.height * 0.8 if stagger else -10
         hi =  self.height * 0.8 if stagger else   0
         self.head = random.uniform(lo, hi)
 
     def tick(self, dt: float) -> None:
-        self.head += self.speed * dt * (self.height / 20.0)
+        self.head += self.speed * dt * (self.height / SPEED_SCALE_ROWS)
         if self.head - self.length > self.height:
             self._init()
         self._ttg -= dt
         if self._ttg <= 0:
             self.chars[random.randrange(len(self.chars))] = random.choice(CHARS)
-            self._ttg = random.uniform(0.004, 0.04)
+            self._ttg = random.uniform(MIN_GLITCH_INTERVAL, MAX_GLITCH_INTERVAL)
 
     def cell_at(self, row: int) -> Optional[tuple[str, str]]:
         """Return (char, ansi_color) for *row*, or None if no rain here."""
