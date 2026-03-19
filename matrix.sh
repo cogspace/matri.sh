@@ -239,6 +239,9 @@ class MatrixShell:
             for c, ch in self._screen.buffer.get(r, {}).items()
             if self._shell_owns_cell(ch)
         }
+        # The input cursor position is always treated as owned so the halo
+        # keeps rain away from wherever the user is typing.
+        owned_cells.add((self._screen.cursor.y, self._screen.cursor.x))
         shell_border: set[tuple[int, int]] = {
             (r + dr, c + dc)
             for (r, c) in owned_cells
