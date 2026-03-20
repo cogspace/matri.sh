@@ -23,6 +23,7 @@ import fcntl
 import os
 import pty
 import random
+import re
 import select
 import shutil
 import signal
@@ -31,6 +32,7 @@ import sys
 import termios
 import time
 import tty
+from collections import deque
 from typing import Optional
 
 if os.environ.get('MATRI_SH') == 'true':
@@ -57,11 +59,25 @@ def _absorb_private(fn):
     return _wrapper
 
 class _Screen(pyte.Screen):
-    pass
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.scrollback: deque[dict] = deque(maxlen=_env_int("MATRISH_SCROLLBACK", 10000))
 
 for _name, _val in vars(pyte.Screen).items():
     if not _name.startswith("_") and callable(_val):
         setattr(_Screen, _name, _absorb_private(_val))
+
+# Hook index() *after* the _absorb_private loop so it isn't overwritten.
+# When pyte scrolls content up, save the departing top line to scrollback.
+_orig_index = _Screen.index
+
+def _scrollback_index(self, *args, **kwargs):
+    top, bottom = self.margins or (0, self.lines - 1)
+    if self.cursor.y == bottom:
+        self.scrollback.append(dict(self.buffer.get(top, {})))
+    return _orig_index(self, *args, **kwargs)
+
+_Screen.index = _scrollback_index
 
 try:
     from wcwidth import wcwidth as _wcwidth
@@ -98,6 +114,7 @@ MAX_LENGTH          = _env_int  ("MATRISH_MAX_LENGTH",          30)
 SPEED_SCALE_ROWS    = _env_float("MATRISH_SPEED_SCALE_ROWS",    20.0)
 MIN_GLITCH_INTERVAL = _env_float("MATRISH_MIN_GLITCH_INTERVAL", 0.004)
 MAX_GLITCH_INTERVAL = _env_float("MATRISH_MAX_GLITCH_INTERVAL", 0.04)
+SCROLL_LINES        = _env_int  ("MATRISH_SCROLL_LINES",        3)
 
 
 # ─── pyte color → ANSI escape ─────────────────────────────────────────────────
@@ -215,6 +232,7 @@ class MatrixShell:
         self._pid: int = -1     # shell process PID
         self._running = True
         self._altscreen = False  # True while shell is in alternate screen mode
+        self._scroll_offset = 0  # Lines scrolled back into history (0 = live)
 
     # ── PTY management ────────────────────────────────────────────────────────
 
@@ -239,6 +257,7 @@ class MatrixShell:
     def _on_sigwinch(self, *_) -> None:
         self.cols, self.rows = shutil.get_terminal_size()
         self._screen.resize(self.rows, self.cols)
+        self._scroll_offset = 0
 
         # Grow or shrink the rain array to match new width
         while len(self._rain) < self.cols:
@@ -254,6 +273,39 @@ class MatrixShell:
                 os.kill(self._pid, signal.SIGWINCH)
             except ProcessLookupError:
                 pass
+
+    # ── Scroll input handling ────────────────────────────────────────────────
+
+    _MOUSE_SGR_RE = re.compile(rb'\033\[<(\d+);(\d+);(\d+)([Mm])')
+
+    @staticmethod
+    def _enable_mouse() -> None:
+        sys.stdout.buffer.write(b'\033[?1000h\033[?1006h')
+        sys.stdout.buffer.flush()
+
+    @staticmethod
+    def _disable_mouse() -> None:
+        sys.stdout.buffer.write(b'\033[?1006l\033[?1000l')
+        sys.stdout.buffer.flush()
+
+    def _filter_input(self, data: bytes) -> bytes:
+        """Intercept scroll events from *data*, return the rest for the shell."""
+        sb_max = len(self._screen.scrollback)
+
+        parts: list[bytes] = []
+        last = 0
+        for m in self._MOUSE_SGR_RE.finditer(data):
+            btn = int(m.group(1))
+            if btn == 64:       # scroll wheel up → scroll back
+                parts.append(data[last:m.start()])
+                self._scroll_offset = min(self._scroll_offset + SCROLL_LINES, sb_max)
+                last = m.end()
+            elif btn == 65:     # scroll wheel down → scroll forward
+                parts.append(data[last:m.start()])
+                self._scroll_offset = max(self._scroll_offset - SCROLL_LINES, 0)
+                last = m.end()
+        parts.append(data[last:])
+        return b''.join(parts)
 
     # ── Rendering ─────────────────────────────────────────────────────────────
 
@@ -281,18 +333,40 @@ class MatrixShell:
 
         prev_esc = ""   # track last colour/attr escape to avoid redundant codes
 
-        # Pre-scan entire screen: find all shell-owned (row, col) pairs, then
-        # build the 8-neighbor border so rain never touches shell text from
-        # any direction (left, right, above, below, or diagonally).
+        # ── Build display buffer (scrollback-aware) ───────────────────────
+        sb = self._screen.scrollback
+        sb_len = len(sb)
+        self._scroll_offset = min(self._scroll_offset, sb_len)
+        scrolled = self._scroll_offset > 0
+
+        if scrolled:
+            # Composite: rows from scrollback history + live screen.
+            # combined index = sb_len - offset + screen_row
+            display_buf: dict = {}
+            for r in range(self.rows):
+                ci = sb_len - self._scroll_offset + r
+                if 0 <= ci < sb_len:
+                    display_buf[r] = sb[ci]
+                elif ci >= sb_len:
+                    screen_row = self._screen.buffer.get(ci - sb_len)
+                    if screen_row is not None:
+                        display_buf[r] = screen_row
+        else:
+            display_buf = self._screen.buffer
+
+        # Pre-scan displayed content: find all shell-owned (row, col) pairs,
+        # then build the 8-neighbor border so rain never touches shell text
+        # from any direction (left, right, above, below, or diagonally).
         owned_cells: set[tuple[int, int]] = {
             (r, c)
             for r in range(self.rows)
-            for c, ch in self._screen.buffer.get(r, {}).items()
+            for c, ch in display_buf.get(r, {}).items()
             if self._shell_owns_cell(ch)
         }
         # The input cursor position is always treated as owned so the halo
         # keeps rain away from wherever the user is typing.
-        owned_cells.add((self._screen.cursor.y, self._screen.cursor.x))
+        if not scrolled:
+            owned_cells.add((self._screen.cursor.y, self._screen.cursor.x))
         shell_border: set[tuple[int, int]] = {
             (r + dr, c + dc)
             for (r, c) in owned_cells
@@ -302,7 +376,7 @@ class MatrixShell:
         } - owned_cells
 
         for row in range(self.rows):
-            row_buf = self._screen.buffer.get(row, {})
+            row_buf = display_buf.get(row, {})
 
             skip_next = False   # True after a wide char: terminal already advanced
             for col_idx in range(self.cols):
@@ -364,10 +438,19 @@ class MatrixShell:
             if row < self.rows - 1:
                 parts.append("\r\n")
 
-        # Restore cursor to wherever the shell left it, then show it
-        cy = self._screen.cursor.y
-        cx = self._screen.cursor.x
-        parts.append(f"\033[0m\033[{cy + 1};{cx + 1}H\033[?25h")
+        if scrolled:
+            # Show scroll indicator and hide cursor while viewing history
+            indicator = f" \u2191{self._scroll_offset} "
+            ind_col = max(1, self.cols - len(indicator))
+            parts.append(
+                f"\033[{self.rows};{ind_col}H\033[0;7m{indicator}\033[0m"
+            )
+            parts.append("\033[?25l")
+        else:
+            # Restore cursor to wherever the shell left it, then show it
+            cy = self._screen.cursor.y
+            cx = self._screen.cursor.x
+            parts.append(f"\033[0m\033[{cy + 1};{cx + 1}H\033[?25h")
         parts.append("\033[?2026l")     # end synchronized update → display frame
 
         payload = "".join(parts).encode("utf-8", errors="replace")
@@ -383,6 +466,7 @@ class MatrixShell:
         saved_tty = termios.tcgetattr(sys.stdin)
         try:
             tty.setraw(sys.stdin.fileno())
+            self._enable_mouse()
             self._spawn_shell()
             signal.signal(signal.SIGWINCH, self._on_sigwinch)
 
@@ -405,7 +489,10 @@ class MatrixShell:
                     try:
                         data = os.read(sys.stdin.fileno(), 256)
                         if data:
-                            os.write(self._fd, data)
+                            data = self._filter_input(data)
+                            if data:
+                                self._scroll_offset = 0  # snap to live on typing
+                                os.write(self._fd, data)
                     except OSError:
                         break
 
@@ -433,6 +520,8 @@ class MatrixShell:
                                 sys.stdout.buffer.flush()
                                 if exiting:
                                     self._altscreen = False
+                                    self._scroll_offset = 0
+                                    self._enable_mouse()
                             else:
                                 # U+FE0F (VARIATION SELECTOR-16, UTF-8: EF B8 8F)
                                 # makes pyte's ByteStream stall mid-chunk, silently
@@ -486,6 +575,7 @@ class MatrixShell:
 
         finally:
             # Restore terminal state unconditionally
+            self._disable_mouse()
             try:
                 termios.tcsetattr(sys.stdin, termios.TCSADRAIN, saved_tty)
             except termios.error:
