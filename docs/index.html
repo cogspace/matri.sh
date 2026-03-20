@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>matri.sh</title>
+    <meta
+      name="description"
+      content="Wraps your terminal in a 60 FPS Matrix digital rain effect. Your shell still works. It just looks cooler."
+    />
+    <style>
+      *,
+      *::before,
+      *::after {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        background: #000;
+        color: #00ff41;
+        font-family: "Courier New", Courier, monospace;
+        height: 100dvh;
+        overflow: hidden;
+      }
+
+      canvas {
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+      }
+
+      main {
+        position: relative;
+        z-index: 1;
+        height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem;
+        gap: 1.5rem;
+      }
+
+      h1 {
+        font-size: clamp(2.5rem, 8vw, 5rem);
+        font-weight: normal;
+        letter-spacing: 0.08em;
+        text-shadow:
+          0 0 15px #00ff41,
+          0 0 35px #00aa2a;
+      }
+
+      .tagline {
+        font-size: clamp(0.8rem, 2vw, 1rem);
+        color: #00b32d;
+        text-align: center;
+        line-height: 1.7;
+        background: rgba(0, 0, 0, 0.72);
+        padding: 0.6rem 1.1rem;
+      }
+
+      .demo {
+        width: min(900px, 100%);
+        border: 1px solid #00802b;
+        display: block;
+      }
+
+      .install-wrap {
+        display: flex;
+        align-items: center;
+        gap: 0;
+        border: 1px solid #00802b;
+        background: rgba(0, 0, 0, 0.75);
+        width: min(580px, 100%);
+      }
+
+      .install-wrap code {
+        flex: 1;
+        font-family: inherit;
+        font-size: clamp(0.7rem, 2.5vw, 0.9rem);
+        color: #00ff41;
+        padding: 0.8rem 1rem;
+        user-select: all;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .copy-btn {
+        flex-shrink: 0;
+        background: transparent;
+        border: none;
+        border-left: 1px solid #00802b;
+        color: #00802b;
+        font-family: inherit;
+        font-size: 0.75rem;
+        padding: 0.8rem 1rem;
+        cursor: pointer;
+        transition:
+          background 0.15s,
+          color 0.15s;
+      }
+      .copy-btn:hover {
+        background: rgba(0, 128, 43, 0.2);
+        color: #00ff41;
+      }
+      .copy-btn.copied {
+        color: #00ff41;
+      }
+
+      .links {
+        display: flex;
+        gap: 2rem;
+        background: rgba(0, 0, 0, 0.72);
+        padding: 0.5rem 1.2rem;
+      }
+
+      a {
+        color: #00802b;
+        text-decoration: none;
+        font-size: 0.9rem;
+        padding-bottom: 1px;
+        border-bottom: 1px solid transparent;
+        transition:
+          color 0.15s,
+          border-color 0.15s;
+      }
+      a:hover {
+        color: #00ff41;
+        border-bottom-color: #00ff41;
+      }
+
+      footer {
+        position: fixed;
+        bottom: 1.2rem;
+        left: 0;
+        right: 0;
+        text-align: center;
+        font-size: 0.65rem;
+        color: #004d15;
+        background: rgba(0, 0, 0, 0.72);
+        padding: 0.35rem 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="rain"></canvas>
+
+    <main>
+      <h1>matri.sh</h1>
+      <p class="tagline">
+        Wraps your <code>$SHELL</code> in a digital rain effect "inspired by"
+        The Matrix.<br />
+        Your shell still works the same. It just looks cooler.
+      </p>
+
+      <img
+        class="demo"
+        src="demo.gif"
+        alt="matri.sh demo – Matrix digital rain overlaid on a live shell session"
+      />
+
+      <div class="install-wrap">
+        <code id="cmd">curl -fsSL https://matri.sh/install.sh | sh</code>
+        <button
+          class="copy-btn"
+          id="copyBtn"
+          onclick="copyCmd()"
+          aria-label="Copy install command"
+        >
+          copy
+        </button>
+      </div>
+
+      <div class="links">
+        <a href="https://github.com/cogspace/matri.sh">GitHub &rarr;</a>
+        <a href="https://github.com/cogspace/matri.sh#configuration"
+          >Configuration</a
+        >
+        <a href="https://github.com/cogspace/matri.sh#requirements"
+          >Requirements</a
+        >
+      </div>
+    </main>
+
+    <footer>
+      ⚠ Like The Matrix itself, matri.sh was created by an AI agent. It's a toy.
+      Don't use it for anything important.
+    </footer>
+
+    <script>
+      // ── Copy button ────────────────────────────────────────────────────────────
+      function copyCmd() {
+        const text = document.getElementById("cmd").textContent;
+        const btn = document.getElementById("copyBtn");
+        navigator.clipboard.writeText(text).then(() => {
+          btn.textContent = "copied!";
+          btn.classList.add("copied");
+          setTimeout(() => {
+            btn.textContent = "copy";
+            btn.classList.remove("copied");
+          }, 2000);
+        });
+      }
+
+      // ── Matrix rain ────────────────────────────────────────────────────────────
+      const CHARS =
+        'ｦｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789Z|+=*"^~><-:@#$%&';
+      const FONT_SIZE = 16;
+
+      const canvas = document.getElementById("rain");
+      const ctx = canvas.getContext("2d");
+      let columns = [];
+
+      function randChar() {
+        return CHARS[(Math.random() * CHARS.length) | 0];
+      }
+
+      function makeColumn(height, stagger) {
+        const len = (6 + Math.random() * 24) | 0;
+        const rows = Math.ceil(height / FONT_SIZE) || 1;
+        return {
+          speed: 60 + Math.random() * 180,
+          length: len,
+          chars: Array.from({ length: rows }, randChar),
+          head: stagger ? -Math.random() * height : -len * FONT_SIZE,
+          glitchTtg: Math.random() * 0.04,
+        };
+      }
+
+      function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        const n = Math.floor(canvas.width / FONT_SIZE);
+        // grow or shrink column array, preserving existing
+        while (columns.length < n)
+          columns.push(makeColumn(canvas.height, true));
+        columns.length = n;
+      }
+
+      function tick(dt) {
+        const h = canvas.height;
+        columns.forEach((col) => {
+          col.head += col.speed * dt;
+          if (col.head - col.length * FONT_SIZE > h) {
+            col.length = (6 + Math.random() * 24) | 0;
+            col.speed = 60 + Math.random() * 180;
+            col.head = -col.length * FONT_SIZE;
+            col.glitchTtg = Math.random() * 0.04;
+          }
+          col.glitchTtg -= dt;
+          if (col.glitchTtg <= 0) {
+            col.chars[(Math.random() * col.chars.length) | 0] = randChar();
+            col.glitchTtg = 0.004 + Math.random() * 0.036;
+          }
+        });
+      }
+
+      // Colour stops mirror the Python source (head → tail)
+      const COLORS = ["#ffffff", "#aaffaa", "#00cc33", "#007a1f", "#003d0e"];
+
+      function draw() {
+        ctx.fillStyle = "rgba(0,0,0,0.13)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.font = `${FONT_SIZE}px "Courier New", monospace`;
+        ctx.textAlign = "center";
+
+        const rowCount = Math.ceil(canvas.height / FONT_SIZE);
+
+        columns.forEach((col, i) => {
+          const x = i * FONT_SIZE + FONT_SIZE / 2;
+          for (let r = 0; r < rowCount; r++) {
+            const y = r * FONT_SIZE;
+            const dist = col.head - y;
+            if (dist < 0 || dist > col.length * FONT_SIZE) continue;
+            const fade = dist / (col.length * FONT_SIZE); // 0 = head, 1 = tail
+            ctx.fillStyle =
+              fade < 0.07
+                ? COLORS[0]
+                : fade < 0.18
+                  ? COLORS[1]
+                  : fade < 0.45
+                    ? COLORS[2]
+                    : fade < 0.7
+                      ? COLORS[3]
+                      : COLORS[4];
+            ctx.fillText(col.chars[r % col.chars.length], x, y + FONT_SIZE);
+          }
+        });
+      }
+
+      let last = 0;
+      function frame(ts) {
+        const dt = Math.min((ts - last) / 1000, 0.05); // cap at 50 ms
+        last = ts;
+        tick(dt);
+        draw();
+        requestAnimationFrame(frame);
+      }
+
+      window.addEventListener("resize", resize);
+      resize();
+      requestAnimationFrame((ts) => {
+        last = ts;
+        requestAnimationFrame(frame);
+      });
+    </script>
+  </body>
+</html>
