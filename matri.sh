@@ -318,6 +318,11 @@ class MatrixShell:
                 if pch is not None and pch.data == "":
                     continue
 
+                # U+FE0F right-half sentinel: planted by the VS16 feed handler
+                # above.  The preceding emoji cell already fills this column.
+                if pch is not None and pch.data == "\ufe0f":
+                    continue
+
                 if self._shell_owns_cell(pch):
                     # ── Shell content wins ────────────────────────────────
                     cell_esc = (
@@ -331,9 +336,9 @@ class MatrixShell:
                     # If the char would overflow the right margin, swap it for a
                     # space — otherwise the terminal auto-wraps AND our \r\n
                     # adds a second newline, doubling the line.
-                    if _wcwidth(glyph) == 2:
+                    if glyph.endswith("\ufe0f") or _wcwidth(glyph) == 2:
                         if col_idx + 1 >= self.cols:
-                            glyph = " "       # clip: can't fit, use placeholder
+                            glyph = glyph.rstrip("\ufe0f") + " "  # clip
                         else:
                             skip_next = True  # terminal cursor is already at col+2
                 elif (row, col_idx) in shell_border:
@@ -429,7 +434,46 @@ class MatrixShell:
                                 if exiting:
                                     self._altscreen = False
                             else:
-                                self._stream.feed(chunk)
+                                # U+FE0F (VARIATION SELECTOR-16, UTF-8: EF B8 8F)
+                                # makes pyte's ByteStream stall mid-chunk, silently
+                                # dropping everything after it.  Split on VS16
+                                # boundaries and feed each piece separately.  After
+                                # each VS16 we annotate pyte's buffer so the
+                                # compositor can emit the pretty 2-wide emoji and
+                                # keep rain out of its right-half column.
+                                _VS16_B = b"\xef\xb8\x8f"
+                                _pieces = chunk.split(_VS16_B)
+                                for _pi, _piece in enumerate(_pieces):
+                                    if _piece:
+                                        self._stream.feed(_piece)
+                                    if _pi < len(_pieces) - 1:
+                                        # Capture base-cell info before VS16
+                                        # potentially alters the cell's data.
+                                        _cy = self._screen.cursor.y
+                                        _cx = self._screen.cursor.x - 1
+                                        _row_b = self._screen.buffer[_cy]
+                                        _base_cell = _row_b[_cx] if _cx >= 0 else None
+                                        self._stream.feed(_VS16_B)
+                                        if _base_cell is not None and _cx >= 0:
+                                            # Store exactly one VS16 on the base
+                                            # cell so the renderer emits emoji form.
+                                            _cdata = _base_cell.data.rstrip("\ufe0f")
+                                            _row_b[_cx] = _base_cell._replace(
+                                                data=_cdata + "\ufe0f"
+                                            )
+                                            # Right-half sentinel: tells the
+                                            # renderer to skip this column (the
+                                            # emoji already fills it) and keeps
+                                            # rain and the halo out.
+                                            if _cx + 1 < self.cols:
+                                                _row_b[_cx + 1] = _base_cell._replace(
+                                                    data="\ufe0f"
+                                                )
+                                            # Advance cursor to match the terminal,
+                                            # which moved 2 columns for the emoji.
+                                            self._screen.cursor.x = min(
+                                                _cx + 2, self.cols - 1
+                                            )
                     except OSError:
                         self._running = False
                         break
