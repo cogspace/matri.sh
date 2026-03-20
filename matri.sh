@@ -33,6 +33,12 @@ import time
 import tty
 from typing import Optional
 
+if os.environ.get('MATRI_SH') == 'true':
+    # Prevent recursive execution (no need for an error message)
+    sys.exit(1)
+
+os.environ['MATRI_SH'] = 'true'
+
 try:
     import pyte
 except ImportError:
