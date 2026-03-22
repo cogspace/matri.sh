@@ -19,6 +19,7 @@ Requires:  pip install pyte
 
 from __future__ import annotations
 
+import base64
 import fcntl
 import os
 import pty
@@ -28,6 +29,7 @@ import select
 import shutil
 import signal
 import struct
+import subprocess
 import sys
 import termios
 import time
@@ -234,6 +236,11 @@ class MatrixShell:
         self._altscreen = False  # True while shell is in alternate screen mode
         self._scroll_offset = 0  # Lines scrolled back into history (0 = live)
 
+        # Mouse selection state (1-based coords from SGR reports → 0-based)
+        self._sel_start: Optional[tuple[int, int]] = None   # (row, col)
+        self._sel_end:   Optional[tuple[int, int]] = None   # (row, col)
+        self._selecting = False
+
     # ── PTY management ────────────────────────────────────────────────────────
 
     def _spawn_shell(self) -> None:
@@ -280,30 +287,125 @@ class MatrixShell:
 
     @staticmethod
     def _enable_mouse() -> None:
-        sys.stdout.buffer.write(b'\033[?1000h\033[?1006h')
+        sys.stdout.buffer.write(b'\033[?1002h\033[?1006h')
         sys.stdout.buffer.flush()
 
     @staticmethod
     def _disable_mouse() -> None:
-        sys.stdout.buffer.write(b'\033[?1006l\033[?1000l')
+        sys.stdout.buffer.write(b'\033[?1006l\033[?1002l')
         sys.stdout.buffer.flush()
 
+    def _sel_ordered(self) -> Optional[tuple[tuple[int,int], tuple[int,int]]]:
+        """Return (start, end) in reading order, or None if no selection."""
+        if self._sel_start is None or self._sel_end is None:
+            return None
+        a, b = self._sel_start, self._sel_end
+        if (a[0], a[1]) > (b[0], b[1]):
+            a, b = b, a
+        return a, b
+
+    def _copy_selection(self) -> None:
+        """Extract selected text from the display buffer and copy via OSC 52."""
+        span = self._sel_ordered()
+        if span is None:
+            return
+        (r0, c0), (r1, c1) = span
+
+        sb = self._screen.scrollback
+        sb_len = len(sb)
+        scrolled = self._scroll_offset > 0
+
+        if scrolled:
+            display_buf: dict = {}
+            for r in range(self.rows):
+                ci = sb_len - self._scroll_offset + r
+                if 0 <= ci < sb_len:
+                    display_buf[r] = sb[ci]
+                elif ci >= sb_len:
+                    screen_row = self._screen.buffer.get(ci - sb_len)
+                    if screen_row is not None:
+                        display_buf[r] = screen_row
+        else:
+            display_buf = self._screen.buffer
+
+        lines: list[str] = []
+        for r in range(r0, r1 + 1):
+            row_buf = display_buf.get(r, {})
+            start_c = c0 if r == r0 else 0
+            end_c   = c1 if r == r1 else self.cols - 1
+            chars: list[str] = []
+            for c in range(start_c, end_c + 1):
+                pch = row_buf.get(c)
+                if pch is not None and pch.data and pch.data not in ("\x00", "", "\ufe0f"):
+                    chars.append(pch.data)
+                else:
+                    chars.append(" ")
+            lines.append("".join(chars).rstrip())
+
+        text = "\n".join(lines)
+        if not text.strip():
+            return
+        # OSC 52 clipboard write (works in many terminals)
+        payload = base64.b64encode(text.encode("utf-8")).decode("ascii")
+        sys.stdout.buffer.write(f"\033]52;c;{payload}\a".encode())
+        sys.stdout.buffer.flush()
+        # Subprocess fallback for terminals that block OSC 52
+        self._clipboard_subprocess(text)
+
+    @staticmethod
+    def _clipboard_subprocess(text: str) -> None:
+        """Try system clipboard tools as a fallback."""
+        candidates = (
+            ["wl-copy"],          # Wayland
+            ["xclip", "-selection", "clipboard"],  # X11
+            ["xsel", "--clipboard", "--input"],    # X11 alt
+        )
+        for cmd in candidates:
+            if shutil.which(cmd[0]):
+                try:
+                    subprocess.Popen(
+                        cmd, stdin=subprocess.PIPE,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    ).communicate(input=text.encode("utf-8"), timeout=2)
+                    return
+                except (OSError, subprocess.TimeoutExpired):
+                    continue
+
     def _filter_input(self, data: bytes) -> bytes:
-        """Intercept scroll events from *data*, return the rest for the shell."""
+        """Intercept mouse and scroll events from *data*, return the rest."""
         sb_max = len(self._screen.scrollback)
 
         parts: list[bytes] = []
         last = 0
         for m in self._MOUSE_SGR_RE.finditer(data):
             btn = int(m.group(1))
+            press = m.group(4) == b'M'   # M = press/drag, m = release
+            col_1 = int(m.group(2)) - 1  # SGR coords are 1-based
+            row_1 = int(m.group(3)) - 1
+
+            parts.append(data[last:m.start()])
+            last = m.end()
+
             if btn == 64:       # scroll wheel up → scroll back
-                parts.append(data[last:m.start()])
                 self._scroll_offset = min(self._scroll_offset + SCROLL_LINES, sb_max)
-                last = m.end()
             elif btn == 65:     # scroll wheel down → scroll forward
-                parts.append(data[last:m.start()])
                 self._scroll_offset = max(self._scroll_offset - SCROLL_LINES, 0)
-                last = m.end()
+            elif btn == 0 and press:      # left button press → start selection
+                self._sel_start = (row_1, col_1)
+                self._sel_end   = (row_1, col_1)
+                self._selecting  = True
+            elif btn == 32 and press:     # motion with left button held → drag
+                if self._selecting:
+                    self._sel_end = (row_1, col_1)
+            elif btn == 0 and not press:  # left button release
+                if self._selecting:
+                    self._sel_end = (row_1, col_1)
+                    self._selecting = False
+                    self._copy_selection()
+                    self._sel_start = None
+                    self._sel_end = None
+            # All other mouse events (right-click, etc.) are silently consumed.
+
         parts.append(data[last:])
         return b''.join(parts)
 
@@ -375,6 +477,13 @@ class MatrixShell:
             if (dr or dc)                           # skip the cell itself
         } - owned_cells
 
+        # Pre-compute selection range for highlight
+        sel_span = self._sel_ordered() if (self._selecting or self._sel_start) else None
+        if sel_span:
+            (sel_r0, sel_c0), (sel_r1, sel_c1) = sel_span
+        else:
+            sel_r0 = sel_c0 = sel_r1 = sel_c1 = -1
+
         for row in range(self.rows):
             row_buf = display_buf.get(row, {})
 
@@ -396,6 +505,18 @@ class MatrixShell:
                 # above.  The preceding emoji cell already fills this column.
                 if pch is not None and pch.data == "\ufe0f":
                     continue
+
+                # Is this cell in the active selection?
+                in_sel = False
+                if sel_r0 >= 0:
+                    if sel_r0 == sel_r1:
+                        in_sel = (row == sel_r0 and sel_c0 <= col_idx <= sel_c1)
+                    elif row == sel_r0:
+                        in_sel = col_idx >= sel_c0
+                    elif row == sel_r1:
+                        in_sel = col_idx <= sel_c1
+                    elif sel_r0 < row < sel_r1:
+                        in_sel = True
 
                 if self._shell_owns_cell(pch):
                     # ── Shell content wins ────────────────────────────────
@@ -429,6 +550,10 @@ class MatrixShell:
                         glyph, cell_esc = rain
                     else:
                         glyph, cell_esc = " ", "\033[0m"
+
+                # Apply reverse-video highlight for selected cells
+                if in_sel:
+                    cell_esc = cell_esc + "\033[7m"
 
                 if cell_esc != prev_esc:
                     parts.append(cell_esc)
@@ -492,6 +617,8 @@ class MatrixShell:
                             data = self._filter_input(data)
                             if data:
                                 self._scroll_offset = 0  # snap to live on typing
+                                self._sel_start = None   # clear selection
+                                self._sel_end = None
                                 os.write(self._fd, data)
                     except OSError:
                         break
