@@ -92,7 +92,7 @@ except ImportError:
 
 CHARS = os.environ.get(
     "MATRISH_CHARS",
-    "ｦｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789Z|¦+=.*\"^<>-:",
+    "ｦｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789Z|¦+=.*\"<>-:",
 )
 
 # ─── Rain tuning constants ────────────────────────────────────────────────────
@@ -111,8 +111,7 @@ def _env_int(name: str, default: int) -> int:
 
 MIN_SPEED           = _env_float("MATRISH_MIN_SPEED",           1.6)
 MAX_SPEED           = _env_float("MATRISH_MAX_SPEED",           5.2)
-MIN_LENGTH          = _env_int  ("MATRISH_MIN_LENGTH",          6)
-MAX_LENGTH          = _env_int  ("MATRISH_MAX_LENGTH",          30)
+MIN_LENGTH          = _env_int  ("MATRISH_MIN_LENGTH",          1)
 SPEED_SCALE_ROWS    = _env_float("MATRISH_SPEED_SCALE_ROWS",    20.0)
 MIN_GLITCH_INTERVAL = _env_float("MATRISH_MIN_GLITCH_INTERVAL", 0.004)
 MAX_GLITCH_INTERVAL = _env_float("MATRISH_MAX_GLITCH_INTERVAL", 0.04)
@@ -186,7 +185,7 @@ class Column:
 
     def _init(self, stagger: bool = False) -> None:
         self.speed  = random.uniform(MIN_SPEED, MAX_SPEED)
-        self.length = random.randint(MIN_LENGTH, min(self.height, MAX_LENGTH))
+        self.length = random.randint(MIN_LENGTH, max(MIN_LENGTH, self.height * 2))
         self.chars  = [random.choice(CHARS) for _ in range(max(self.height, 1))]
         self._ttg   = random.uniform(MIN_GLITCH_INTERVAL, MAX_GLITCH_INTERVAL)
         # Stagger starting positions so columns don't all start together
