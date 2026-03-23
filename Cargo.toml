@@ -1,0 +1,15 @@
+[package]
+name = "matrish"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "matrish"
+path = "src/main.rs"
+
+[dependencies]
+vt100 = "0.15"
+nix = { version = "0.29", features = ["term", "signal", "process", "fs", "poll"] }
+rand = "0.8"
+base64 = "0.21"
+libc = "0.2"
