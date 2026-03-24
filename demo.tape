@@ -7,18 +7,28 @@ Set Theme "Dracula"
 Set Framerate 60
 
 Hide
-Type "./matri.sh"
+Type "matri.sh"
 Enter
 Sleep 3s
 Show
 
-Type "echo 'hello from the matrix'"
-Sleep 500ms
-Enter
+Type "Wake up, Neo..."
+Sleep 3s
+Ctrl+U
 
-Sleep 2s
+Type "The Matrix has you..."
+Sleep 3s
+Ctrl+U
 
-Type "ls -la"
+Type "Follow the white rabbit."
+Sleep 3s 
+Ctrl+U
+
+Type "Knock, knock, Neo."
+Sleep 1s
+Ctrl+U
+
+Type "tree"
 Sleep 500ms
 Enter
 
@@ -28,15 +38,15 @@ Type "git status"
 Sleep 500ms
 Enter
 
-Sleep 3s
+Sleep 2s
 
 Type "glods"
 Sleep 500ms
 Enter
 
-Sleep 3s
+Sleep 5s
 
-Type "grep MATRISH_ matri.sh"
+Type "cat README.md"
 Sleep 500ms
 Enter
 
