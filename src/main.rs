@@ -681,7 +681,7 @@ impl MatrixShell {
                 let elapsed = last_render.elapsed();
                 if elapsed >= d { Duration::ZERO } else { d - elapsed }
             }).unwrap_or(Duration::ZERO);
-            let mut tv = TimeVal::new(wait.as_secs() as i64, wait.subsec_micros() as i64);
+            let mut tv = TimeVal::new(wait.as_secs() as i64, wait.subsec_micros() as _);
 
             let mut rfds = FdSet::new();
             unsafe {
