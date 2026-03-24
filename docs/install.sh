@@ -1,87 +1,73 @@
 #!/bin/sh
-# matri.sh installer
-# Usage: curl -fsSL https://matri.sh/install.sh | sh
-
 set -e
 
-RAW_URL="https://raw.githubusercontent.com/cogspace/matri.sh/main/matri.sh"
-BIN_DIR="${HOME}/.local/bin"
-DEST="${BIN_DIR}/matri.sh"
+BASE_URL="https://github.com/cogspace/matri.sh/releases/latest/download"
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
-
-green()  { printf '\033[32m%s\033[0m\n' "$*"; }
-yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
-red()    { printf '\033[31m%s\033[0m\n' "$*"; }
-die()    { red "error: $*" >&2; exit 1; }
-
-# ── Python check ───────────────────────────────────────────────────────────────
-
-PYTHON=""
-for py in python3 python; do
-  if command -v "$py" >/dev/null 2>&1; then
-    if "$py" -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" 2>/dev/null; then
-      PYTHON="$py"
-      break
-    fi
-  fi
-done
-
-[ -n "$PYTHON" ] || die "Python 3.10+ is required. Install it from https://python.org and try again."
-
-# ── Download ───────────────────────────────────────────────────────────────────
-
-mkdir -p "$BIN_DIR"
-
-if command -v curl >/dev/null 2>&1; then
-  curl -fsSL "$RAW_URL" -o "$DEST"
-elif command -v wget >/dev/null 2>&1; then
-  wget -qO "$DEST" "$RAW_URL"
+if [ -n "$INSTALL_DIR" ]; then
+  : # use provided value
+elif [ -w /usr/local/bin ]; then
+  INSTALL_DIR="/usr/local/bin"
 else
-  die "curl or wget is required to download matri.sh."
+  INSTALL_DIR="$HOME/.local/bin"
+  mkdir -p "$INSTALL_DIR"
+fi
+
+# Detect OS and architecture
+OS="$(uname -s)"
+ARCH="$(uname -m)"
+
+case "$OS" in
+  Linux)
+    case "$ARCH" in
+      x86_64)  BINARY="matri.sh-linux-x86_64" ;;
+      aarch64) BINARY="matri.sh-linux-aarch64" ;;
+      *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
+    esac
+    ;;
+  Darwin)
+    case "$ARCH" in
+      arm64)  BINARY="matri.sh-macos-aarch64" ;;
+      x86_64) echo "No prebuilt binary for macOS x86_64. Please build from source." >&2; exit 1 ;;
+      *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
+    esac
+    ;;
+  *)
+    echo "Unsupported OS: $OS" >&2
+    exit 1
+    ;;
+esac
+
+URL="$BASE_URL/$BINARY"
+DEST="$INSTALL_DIR/matri.sh"
+
+echo "Downloading $BINARY..."
+if command -v curl >/dev/null 2>&1; then
+  curl -fsSL "$URL" -o "$DEST"
+elif command -v wget >/dev/null 2>&1; then
+  wget -qO "$DEST" "$URL"
+else
+  echo "curl or wget is required" >&2
+  exit 1
 fi
 
 chmod +x "$DEST"
+echo "Installed to $DEST"
 
-# ── Python dependencies ────────────────────────────────────────────────────────
-
-green "Installing Python dependencies..."
-"$PYTHON" -m pip install --quiet pyte
-
-# wcwidth is optional — don't fail if it can't install
-"$PYTHON" -m pip install --quiet wcwidth 2>/dev/null || \
-  yellow "  (wcwidth not installed — wide characters will default to width 1)"
-
-# ── PATH hint ─────────────────────────────────────────────────────────────────
-
-RC_HINT=""
-case "${SHELL}" in
-  */zsh)  RC_HINT="~/.zshrc" ;;
-  */bash) RC_HINT="~/.bashrc" ;;
-  */fish) RC_HINT="~/.config/fish/config.fish" ;;
-esac
-
-echo ""
-green "matri.sh installed to ${DEST}"
-echo ""
-
-# Check if BIN_DIR is already on PATH
-case ":${PATH}:" in
-  *":${BIN_DIR}:"*)
-    green "Run it with:  matri.sh"
-    ;;
+case ":$PATH:" in
+  *":$INSTALL_DIR:"*) ;;
   *)
-    yellow "Add ~/.local/bin to your PATH to run it from anywhere:"
+    echo "Note: $INSTALL_DIR is not in your PATH."
+    case "${SHELL##*/}" in
+      zsh)  RC="$HOME/.zshrc" ;;
+      fish) RC="$HOME/.config/fish/config.fish" ;;
+      *)    RC="$HOME/.bashrc" ;;
+    esac
+    echo "Add it by running:"
     echo ""
-    if [ "$SHELL" = "*/fish" ]; then
-      echo "    fish_add_path ~/.local/bin"
+    if [ "${SHELL##*/}" = "fish" ]; then
+      echo "    echo 'fish_add_path $INSTALL_DIR' >> $RC"
     else
-      echo "    export PATH=\"\$HOME/.local/bin:\$PATH\""
-      [ -n "$RC_HINT" ] && echo "    (add the above line to ${RC_HINT})"
+      echo "    echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> $RC"
     fi
-    echo ""
-    yellow "Or run it directly:"
-    echo "    ${DEST}"
     ;;
 esac
-echo ""
