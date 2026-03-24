@@ -75,6 +75,14 @@ impl Config {
     }
 }
 
+/// Returns the frame time cap, or `None` for unlimited.
+fn max_fps_frame_dur() -> Option<Duration> {
+    match env_int("MATRISH_MAX_FPS", 60) {
+        n if n <= 0 => None,
+        n           => Some(Duration::from_nanos(1_000_000_000 / n as u64)),
+    }
+}
+
 // ─── Color / attribute escapes ────────────────────────────────────────────────
 
 fn color_esc(color: vt100::Color, fg: bool) -> String {
@@ -312,6 +320,10 @@ struct MatrixShell {
     sel_start: Option<(usize, usize)>,  // (row, col) 0-based
     sel_end:   Option<(usize, usize)>,
     selecting: bool,
+    show_fps: bool,
+    fps_frames: u32,
+    fps_elapsed: f64,
+    fps_display: f64,
     cfg: Config,
 }
 
@@ -336,6 +348,10 @@ impl MatrixShell {
             sel_start: None,
             sel_end: None,
             selecting: false,
+            show_fps: std::env::var("MATRISH_SHOW_FPS").is_ok(),
+            fps_frames: 0,
+            fps_elapsed: 0.0,
+            fps_display: 0.0,
             cfg,
         }
     }
@@ -607,6 +623,21 @@ impl MatrixShell {
             out.extend_from_slice(s.as_bytes());
         }
 
+        // FPS counter — top-right corner, dim green to blend with rain
+        self.fps_frames  += 1;
+        self.fps_elapsed += dt;
+        if self.fps_elapsed >= 0.5 {
+            self.fps_display  = self.fps_frames as f64 / self.fps_elapsed;
+            self.fps_frames   = 0;
+            self.fps_elapsed  = 0.0;
+        }
+        if self.show_fps {
+            let counter = format!(" {:.0} fps ", self.fps_display);
+            let ctr_col = (self.cols as usize).saturating_sub(counter.len()) + 1;
+            let ctr = format!("\x1b[1;{}H\x1b[97m{counter}\x1b[0m", ctr_col);
+            out.extend_from_slice(ctr.as_bytes());
+        }
+
         out.extend_from_slice(b"\x1b[?2026l");
     }
 
@@ -637,8 +668,7 @@ impl MatrixShell {
         self.enable_mouse();
         self.spawn_shell().expect("spawn_shell");
 
-        const FPS: u64 = 60;
-        let frame_dur = Duration::from_nanos(1_000_000_000 / FPS);
+        let frame_dur = max_fps_frame_dur();
         let mut last_render = Instant::now();
         let mut render_buf: Vec<u8> = Vec::with_capacity(64 * 1024);
 
@@ -647,9 +677,11 @@ impl MatrixShell {
                 self.on_sigwinch();
             }
 
-            let elapsed = last_render.elapsed();
-            let wait    = if elapsed >= frame_dur { Duration::ZERO } else { frame_dur - elapsed };
-            let mut tv  = TimeVal::new(wait.as_secs() as i64, wait.subsec_micros() as i64);
+            let wait = frame_dur.map(|d| {
+                let elapsed = last_render.elapsed();
+                if elapsed >= d { Duration::ZERO } else { d - elapsed }
+            }).unwrap_or(Duration::ZERO);
+            let mut tv = TimeVal::new(wait.as_secs() as i64, wait.subsec_micros() as i64);
 
             let mut rfds = FdSet::new();
             unsafe {
@@ -712,7 +744,8 @@ impl MatrixShell {
             if !self.altscreen {
                 let now     = Instant::now();
                 let elapsed = now.duration_since(last_render);
-                if elapsed >= frame_dur {
+                let ready   = frame_dur.map(|d| elapsed >= d).unwrap_or(true);
+                if ready {
                     render_buf.clear();
                     self.render(elapsed.as_secs_f64(), &mut render_buf);
                     let _ = std::io::stdout().write_all(&render_buf);
